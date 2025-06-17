@@ -1,0 +1,15 @@
+{
+  "name": "saintdurbin-distribution",
+  "version": "1.0.0",
+  "description": "SaintDurbin yield distribution cron job",
+  "main": "distribute.js",
+  "scripts": {
+    "distribute": "node distribute.js",
+    "test": "node distribute.js --dry-run"
+  },
+  "dependencies": {
+    "ethers": "^6.9.0",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1"
+  }
+}

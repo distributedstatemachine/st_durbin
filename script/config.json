@@ -1,0 +1,14 @@
+{
+  "gasLimits": {
+    "executeTransfer": 1000000,
+    "maxGasPrice": "50000000000"
+  },
+  "notifications": {
+    "slackEnabled": true,
+    "emailEnabled": false
+  },
+  "retryPolicy": {
+    "maxRetries": 3,
+    "retryDelay": 60000
+  }
+}

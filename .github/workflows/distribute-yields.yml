@@ -1,0 +1,37 @@
+# .github/workflows/distribute-yields.yml
+name: SaintDurbin Yield Distribution
+
+on:
+  schedule:
+    # Runs daily at 00:00 UTC
+    - cron: '0 0 * * *'
+  # Allow manual trigger for testing
+  workflow_dispatch:
+
+jobs:
+  distribute:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '20'
+    
+    - name: Install dependencies
+      run: |
+        cd script
+        npm install
+    
+    - name: Run distribution
+      env:
+        PRIVATE_KEY: ${{ secrets.DISTRIBUTOR_PRIVATE_KEY }}
+        RPC_URL: ${{ secrets.BITTENSOR_RPC_URL }}
+        CONTRACT_ADDRESS: ${{ secrets.SAINTDURBIN_CONTRACT_ADDRESS }}
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+      run: |
+        cd script
+        node distribute.js
