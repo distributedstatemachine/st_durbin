@@ -51,17 +51,22 @@ contract SaintDurbinTest is Test {
         proportions[2] = 500;  // Paper: 5%
         proportions[3] = 100;  // Florian: 1%
         
-        // Remaining 12 recipients with even distribution
-        uint256 remaining = 9200; // 92%
-        uint256 perWallet = remaining / 12; // 766
-        uint256 leftover = remaining % 12; // 8
-        
+        // Remaining 12 recipients with uneven distribution
+        proportions[4] = 100;   // Extra recipient 1: 1%
+        proportions[5] = 100;   // Extra recipient 2: 1%
+        proportions[6] = 100;   // Extra recipient 3: 1%
+        proportions[7] = 300;   // Extra recipient 4: 3%
+        proportions[8] = 300;   // Extra recipient 5: 3%
+        proportions[9] = 300;   // Extra recipient 6: 3%
+        proportions[10] = 1000; // Extra recipient 7: 10%
+        proportions[11] = 1000; // Extra recipient 8: 10%
+        proportions[12] = 1000; // Extra recipient 9: 10%
+        proportions[13] = 1500; // Extra recipient 10: 15%
+        proportions[14] = 1500; // Extra recipient 11: 15%
+        proportions[15] = 2000; // Extra recipient 12: 20%
+
         for (uint256 i = 4; i < 16; i++) {
             recipientColdkeys[i] = bytes32(uint256(0x500 + i));
-            proportions[i] = perWallet;
-            if (i == 15) {
-                proportions[i] += leftover; // Add remainder to last wallet
-            }
         }
         
         // Setup validator

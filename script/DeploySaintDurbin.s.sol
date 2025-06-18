@@ -52,21 +52,20 @@ contract DeploySaintDurbin is Script {
         params.proportions[2] = 500;  // Paper: 5%
         params.proportions[3] = 100;  // Florian: 1%
         
-        // Calculate remaining distribution
-        uint256 allocated = 100 + 100 + 500 + 100; // 800 basis points
-        uint256 remaining = 10000 - allocated; // 9200 basis points
-        uint256 perWallet = remaining / 12; // 766 basis points each
-        uint256 leftover = remaining % 12; // 8 basis points
-        
-        // Distribute evenly among remaining 12 wallets
-        for (uint256 i = 4; i < 16; i++) {
-            params.proportions[i] = perWallet;
-            if (i == 15) {
-                // Add any leftover to the last wallet to ensure sum is exactly 10000
-                params.proportions[i] += leftover;
-            }
-        }
-        
+        // Uneven distribution on remainder of wallets to allow flexibility of potential future allocation.
+        params.proportions[4] = 100;   // Extra recipient 1: 1%
+        params.proportions[5] = 100;   // Extra recipient 2: 1%
+        params.proportions[6] = 100;   // Extra recipient 3: 1%
+        params.proportions[7] = 300;   // Extra recipient 4: 3%
+        params.proportions[8] = 300;   // Extra recipient 5: 3%
+        params.proportions[9] = 300;   // Extra recipient 6: 3%
+        params.proportions[10] = 1000; // Extra recipient 7: 10%
+        params.proportions[11] = 1000; // Extra recipient 8: 10%
+        params.proportions[12] = 1000; // Extra recipient 9: 10%
+        params.proportions[13] = 1500; // Extra recipient 10: 15%
+        params.proportions[14] = 1500; // Extra recipient 11: 15%
+        params.proportions[15] = 2000; // Extra recipient 12: 20%
+
         // Verify proportions sum to 10000
         uint256 total = 0;
         for (uint256 i = 0; i < params.proportions.length; i++) {
@@ -103,7 +102,7 @@ contract DeploySaintDurbin is Script {
         console.log("WSL: 1% (100 basis points)");
         console.log("Paper: 5% (500 basis points)");
         console.log("Florian: 1% (100 basis points)");
-        console.log("Remaining 12 wallets: ~7.67% each (", perWallet, "basis points)");
+        console.log("Remaining 12 wallets: 92% (9200 basis points)");
         console.log("Total verified:", total, "basis points");
         
         // Write deployment info to file
