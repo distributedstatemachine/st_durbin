@@ -51,17 +51,22 @@ contract SaintDurbinTest is Test {
         proportions[2] = 500;  // Paper: 5%
         proportions[3] = 100;  // Florian: 1%
         
-        // Remaining 12 recipients with even distribution
-        uint256 remaining = 9200; // 92%
-        uint256 perWallet = remaining / 12; // 766
-        uint256 leftover = remaining % 12; // 8
-        
+        // Remaining 12 recipients with uneven distribution
+        proportions[4] = 100;   // Extra recipient 1: 1%
+        proportions[5] = 100;   // Extra recipient 2: 1%
+        proportions[6] = 100;   // Extra recipient 3: 1%
+        proportions[7] = 300;   // Extra recipient 4: 3%
+        proportions[8] = 300;   // Extra recipient 5: 3%
+        proportions[9] = 300;   // Extra recipient 6: 3%
+        proportions[10] = 1000; // Extra recipient 7: 10%
+        proportions[11] = 1000; // Extra recipient 8: 10%
+        proportions[12] = 1000; // Extra recipient 9: 10%
+        proportions[13] = 1500; // Extra recipient 10: 15%
+        proportions[14] = 1500; // Extra recipient 11: 15%
+        proportions[15] = 2000; // Extra recipient 12: 20%
+
         for (uint256 i = 4; i < 16; i++) {
             recipientColdkeys[i] = bytes32(uint256(0x500 + i));
-            proportions[i] = perWallet;
-            if (i == 15) {
-                proportions[i] += leftover; // Add remainder to last wallet
-            }
         }
         
         // Setup validator
@@ -146,13 +151,57 @@ contract SaintDurbinTest is Test {
         assertEq(paperTransfer.amount, (yieldAmount * 500) / 10000); // 50 TAO
     }
     
-    function testPrincipalProtection() public {
-        // Try to execute without yield
+    function testFallbackToLastPaymentAmount() public {
+        // First, make a successful transfer with yield
+        uint256 firstYield = 1000e9; // 1,000 TAO
+        mockStaking.addYield(contractSs58Key, validatorHotkey, netuid, firstYield);
+
+        // Advance blocks and execute first transfer
         vm.roll(block.number + 7200);
-        vm.expectRevert("No yield to distribute");
         saintDurbin.executeTransfer();
+
+        // Verify first transfer happened
+        uint256 firstTransferCount = mockStaking.getTransferCount();
+        assertEq(firstTransferCount, 16);
+
+        // Now advance blocks again but don't add any new yield
+        vm.roll(block.number + 7200);
+
+        // Execute transfer again - should use last payment amount as fallback
+        saintDurbin.executeTransfer();
+
+        // Verify second round of transfers happened
+        uint256 secondTransferCount = mockStaking.getTransferCount();
+        assertEq(secondTransferCount, 32); // 16 more transfers
+
+        // Verify the amounts are the same as the first transfer
+        // Check Sam's second transfer (index 16) matches first (index 0)
+        MockStaking.Transfer memory firstSamTransfer = mockStaking.getTransfer(0);
+        MockStaking.Transfer memory secondSamTransfer = mockStaking.getTransfer(16);
+        assertEq(secondSamTransfer.amount, firstSamTransfer.amount);
+        assertEq(secondSamTransfer.amount, (firstYield * 100) / 10000); // Still 1% of original yield
+
+        // Check Paper's second transfer matches first
+        MockStaking.Transfer memory firstPaperTransfer = mockStaking.getTransfer(2);
+        MockStaking.Transfer memory secondPaperTransfer = mockStaking.getTransfer(18);
+        assertEq(secondPaperTransfer.amount, firstPaperTransfer.amount);
+        assertEq(secondPaperTransfer.amount, (firstYield * 500) / 10000); // Still 5% of original yield
     }
-    
+
+    function testNoFallbackWhenNoPreviousPayment() public {
+        // Try to execute without any yield or previous payment
+        vm.roll(block.number + 7200);
+
+        // Should not revert, but should not transfer anything
+        saintDurbin.executeTransfer();
+
+        // Verify no transfers occurred
+        assertEq(mockStaking.getTransferCount(), 0);
+
+        // Verify tracking was updated
+        assertEq(saintDurbin.lastTransferBlock(), block.number);
+    }
+
     function testMinimumBlockInterval() public {
         // Add yield
         mockStaking.addYield(contractSs58Key, validatorHotkey, netuid, 1000e9);

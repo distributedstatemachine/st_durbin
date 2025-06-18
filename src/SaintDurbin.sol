@@ -120,12 +120,24 @@ contract SaintDurbin {
         require(canExecuteTransfer(), "Cannot execute transfer yet");
         
         uint256 currentBalance = getStakedBalance();
-        require(currentBalance > principalLocked, "No yield to distribute");
+        uint256 availableYield;
         
-        uint256 availableYield = currentBalance - principalLocked;
+        // If balance hasn't changed, use last payment amount as fallback
+        if (currentBalance <= principalLocked) {
+            if (lastPaymentAmount > 0) {
+                availableYield = lastPaymentAmount;
+            } else {
+                // No yield and no previous payment to fall back to
+                lastTransferBlock = block.number;
+                previousBalance = currentBalance;
+                return;
+            }
+        } else {
+            availableYield = currentBalance - principalLocked;
+        }
         
         // Rate analysis for principal detection
-        if (lastPaymentAmount > 0 && previousBalance > 0) {
+        if (lastPaymentAmount > 0 && previousBalance > 0 && currentBalance > principalLocked) {
             uint256 blocksSinceLastTransfer = block.number - lastTransferBlock;
             uint256 currentRate = (availableYield * 1e18) / blocksSinceLastTransfer;
             
@@ -139,8 +151,8 @@ contract SaintDurbin {
             }
             
             lastRewardRate = currentRate;
-        } else {
-            // First transfer - establish baseline rate
+        } else if (currentBalance > principalLocked) {
+            // First transfer or establishing baseline rate
             uint256 blocksSinceLastTransfer = block.number - lastTransferBlock;
             if (blocksSinceLastTransfer > 0) {
                 lastRewardRate = (availableYield * 1e18) / blocksSinceLastTransfer;
@@ -184,7 +196,7 @@ contract SaintDurbin {
         
         emit StakeTransferred(totalTransferred, previousBalance);
     }
-    
+
     /**
      * @notice Change the validator hotkey (owner only)
      * @param newHotkey The new validator hotkey
