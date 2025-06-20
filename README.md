@@ -583,9 +583,6 @@ forge script script/DeploySaintDurbin.s.sol \
 3. Emergency drain requires Polkadot multisig
 4. Distribution frequency limited by block interval
 
-### Bug Bounty
-
-For security vulnerabilities, please contact: security@example.com
 
 ---
 
