@@ -23,7 +23,7 @@ jobs:
     
     - name: Install dependencies
       run: |
-        cd script
+        cd scriptr
         npm install
     
     - name: Run distribution

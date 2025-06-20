@@ -1,7 +1,10 @@
 // scripts/distribute.js
 const { ethers } = require('ethers');
-const axios = require('axios');
-require('dotenv').config();
+
+// Only load dotenv if not in test environment
+if (process.env.NODE_ENV !== 'test') {
+  require('dotenv').config();
+}
 
 const SAINTDURBIN_ABI = [
   "function canExecuteTransfer() external view returns (bool)",
@@ -17,11 +20,6 @@ const SAINTDURBIN_ABI = [
   "event ValidatorSwitched(bytes32 indexed oldHotkey, bytes32 indexed newHotkey, uint16 newUid, string reason)"
 ];
 
-// No longer needed - contract handles validator switching automatically
-// const ISTAKING_ABI = [
-//   "function getTotalStake(bytes32 hotkey, uint16 netuid) external view returns (uint256)"
-// ];
-
 // Configuration for monitoring
 const CONFIG = {
   // Check validator status every N distributions
@@ -33,34 +31,59 @@ const CONFIG = {
 
 let distributionCount = 0;
 
-async function main() {
-  const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
-  const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
-  const contract = new ethers.Contract(process.env.CONTRACT_ADDRESS, SAINTDURBIN_ABI, wallet);
-  // Staking contract no longer needed - contract handles validator switching
+/**
+ * Get current distribution count
+ * @returns {number} Current distribution count
+ */
+function getDistributionCount() {
+  return distributionCount;
+}
 
-  console.log('SaintDurbin Distribution Script Started');
-  console.log('Contract:', process.env.CONTRACT_ADDRESS);
-  console.log('Executor:', wallet.address);
+/**
+ * Set distribution count (useful for testing)
+ * @param {number} count - New distribution count
+ */
+function setDistributionCount(count) {
+  distributionCount = count;
+}
+
+/**
+ * Execute a distribution
+ * @param {ethers.Contract} contract - The SaintDurbin contract instance
+ * @param {ethers.providers.Provider} provider - The Ethereum provider
+ * @param {Object} options - Options for distribution
+ * @param {boolean} options.skipValidatorCheck - Skip validator status check
+ * @returns {Object} Result object with success status and details
+ */
+async function executeDistribution(contract, provider, options = {}) {
+  const result = {
+    success: false,
+    canExecute: false,
+    blocksRemaining: null,
+    transactionHash: null,
+    amount: null,
+    gasUsed: null,
+    error: null,
+    validatorSwitched: false
+  };
 
   try {
     // Increment distribution counter
     distributionCount++;
     
     // Check validator status periodically
-    if (distributionCount % CONFIG.checkInterval === 0) {
-      await checkValidatorStatus(contract, provider);
+    if (!options.skipValidatorCheck && distributionCount % CONFIG.checkInterval === 0) {
+      await checkValidatorStatus(contract, provider, options);
     }
 
     // Check if distribution can be executed
-    const canExecute = await contract.canExecuteTransfer();
+    result.canExecute = await contract.canExecuteTransfer();
     
-    if (!canExecute) {
-      const blocksRemaining = await contract.blocksUntilNextTransfer();
-      const message = `Distribution not ready. Blocks remaining: ${blocksRemaining}`;
+    if (!result.canExecute) {
+      result.blocksRemaining = await contract.blocksUntilNextTransfer();
+      const message = `Distribution not ready. Blocks remaining: ${result.blocksRemaining}`;
       console.log(message);
-      await sendSlackNotification(message, 'warning');
-      return;
+      return result;
     }
 
     // Get distribution details
@@ -80,30 +103,101 @@ async function main() {
     const receipt = await tx.wait();
     
     if (receipt.status === 1) {
+      result.success = true;
+      result.transactionHash = tx.hash;
+      result.amount = nextAmount.toString();
+      result.gasUsed = receipt.gasUsed.toString();
+      
       const message = `✅ Distribution successful!\nTx: ${tx.hash}\nAmount: ${ethers.formatUnits(nextAmount, 9)} TAO\nGas used: ${receipt.gasUsed.toString()}`;
       console.log(message);
-      await sendSlackNotification(message, 'success');
       
       // Monitor for validator switches during distribution
-      await monitorValidatorSwitches(contract, receipt);
+      const switchEvents = await monitorValidatorSwitches(contract, receipt, options);
+      result.validatorSwitched = switchEvents.length > 0;
     } else {
       throw new Error('Transaction failed');
     }
 
   } catch (error) {
+    result.error = error.message;
     const message = `❌ Distribution failed!\nError: ${error.message}`;
     console.error(message);
-    await sendSlackNotification(message, 'error');
+  }
+
+  return result;
+}
+
+/**
+ * Initialize distribution components
+ * @param {Object} config - Configuration object
+ * @param {string} config.rpcUrl - RPC URL
+ * @param {string} config.privateKey - Private key
+ * @param {string} config.contractAddress - Contract address
+ * @returns {Object} Object with provider, wallet, and contract
+ */
+function initializeDistribution(config) {
+  const provider = new ethers.JsonRpcProvider(config.rpcUrl);
+  const wallet = new ethers.Wallet(config.privateKey, provider);
+  const contract = new ethers.Contract(config.contractAddress, SAINTDURBIN_ABI, wallet);
+  
+  return { provider, wallet, contract };
+}
+
+/**
+ * Main function for CLI execution
+ */
+async function main() {
+  console.log('SaintDurbin Distribution Script Started');
+  console.log('Contract:', process.env.CONTRACT_ADDRESS);
+  
+  try {
+    const { provider, wallet, contract } = initializeDistribution({
+      rpcUrl: process.env.RPC_URL,
+      privateKey: process.env.PRIVATE_KEY,
+      contractAddress: process.env.CONTRACT_ADDRESS
+    });
+    
+    console.log('Executor:', wallet.address);
+    
+    const result = await executeDistribution(contract, provider);
+    
+    if (!result.success && result.error) {
+      process.exit(1);
+    }
+  } catch (error) {
+    console.error('Failed to initialize distribution:', error.message);
     process.exit(1);
   }
 }
 
-async function checkValidatorStatus(contract, provider) {
+/**
+ * Check validator status
+ * @param {ethers.Contract} contract - The SaintDurbin contract instance
+ * @param {ethers.providers.Provider} provider - The Ethereum provider
+ * @param {Object} options - Options
+ * @returns {Object} Status object with validator information
+ */
+async function checkValidatorStatus(contract, provider, options = {}) {
   console.log('Checking validator status...');
+  
+  const status = {
+    success: false,
+    hotkey: null,
+    uid: null,
+    isValid: false,
+    stakedBalance: null,
+    validatorSwitched: false,
+    switchTransactionHash: null,
+    error: null
+  };
   
   try {
     // Get current validator info
     const [hotkey, uid, isValid] = await contract.getCurrentValidatorInfo();
+    status.hotkey = hotkey;
+    status.uid = uid.toString();
+    status.isValid = isValid;
+    
     console.log('Current validator:');
     console.log('  Hotkey:', hotkey);
     console.log('  UID:', uid.toString());
@@ -112,7 +206,6 @@ async function checkValidatorStatus(contract, provider) {
     if (!isValid) {
       const message = `⚠️ Current validator is no longer valid!\nThe contract will automatically switch to a new validator.\nHotkey: ${hotkey}\nUID: ${uid}`;
       console.warn(message);
-      await sendSlackNotification(message, 'warning');
       
       // Optionally trigger manual validator check
       console.log('Triggering validator check...');
@@ -121,6 +214,7 @@ async function checkValidatorStatus(contract, provider) {
           gasLimit: 500000
         });
         console.log('Validator check transaction:', tx.hash);
+        status.switchTransactionHash = tx.hash;
         const receipt = await tx.wait();
         
         // Check for ValidatorSwitched event
@@ -135,9 +229,9 @@ async function checkValidatorStatus(contract, provider) {
         
         if (switchEvent) {
           const parsed = contract.interface.parseLog(switchEvent);
+          status.validatorSwitched = true;
           const message = `✅ Validator switched successfully!\nOld: ${parsed.args.oldHotkey}\nNew: ${parsed.args.newHotkey}\nNew UID: ${parsed.args.newUid}\nReason: ${parsed.args.reason}`;
           console.log(message);
-          await sendSlackNotification(message, 'success');
         }
       } catch (error) {
         console.log('Validator check transaction failed or no switch needed:', error.message);
@@ -148,22 +242,34 @@ async function checkValidatorStatus(contract, provider) {
     
     // Also check contract's staked balance
     const stakedBalance = await contract.getStakedBalance();
+    status.stakedBalance = stakedBalance.toString();
     console.log('Contract staked balance:', ethers.formatUnits(stakedBalance, 9), 'TAO');
     
+    status.success = true;
   } catch (error) {
+    status.error = error.message;
     const message = `❌ Validator status check failed!\nError: ${error.message}`;
     console.error(message);
-    await sendSlackNotification(message, 'error');
   }
+  
+  return status;
 }
 
-// Monitor for validator switch events
-async function monitorValidatorSwitches(contract, receipt) {
-  if (!CONFIG.monitorValidatorSwitches) return;
+/**
+ * Monitor for validator switch events
+ * @param {ethers.Contract} contract - The SaintDurbin contract instance
+ * @param {Object} receipt - Transaction receipt
+ * @param {Object} options - Options
+ * @returns {Array} Array of switch events
+ */
+async function monitorValidatorSwitches(contract, receipt, options = {}) {
+  const switchEvents = [];
+  
+  if (!CONFIG.monitorValidatorSwitches) return switchEvents;
   
   try {
     // Check for ValidatorSwitched events in the transaction receipt
-    const switchEvents = receipt.logs.filter(log => {
+    const events = receipt.logs.filter(log => {
       try {
         const parsed = contract.interface.parseLog(log);
         return parsed && parsed.name === 'ValidatorSwitched';
@@ -172,44 +278,43 @@ async function monitorValidatorSwitches(contract, receipt) {
       }
     });
     
-    for (const event of switchEvents) {
+    for (const event of events) {
       const parsed = contract.interface.parseLog(event);
-      const message = `🔄 Validator switched during distribution!\nOld: ${parsed.args.oldHotkey}\nNew: ${parsed.args.newHotkey}\nNew UID: ${parsed.args.newUid}\nReason: ${parsed.args.reason}`;
+      const eventData = {
+        oldHotkey: parsed.args.oldHotkey,
+        newHotkey: parsed.args.newHotkey,
+        newUid: parsed.args.newUid.toString(),
+        reason: parsed.args.reason
+      };
+      switchEvents.push(eventData);
+      
+      const message = `🔄 Validator switched during distribution!\nOld: ${eventData.oldHotkey}\nNew: ${eventData.newHotkey}\nNew UID: ${eventData.newUid}\nReason: ${eventData.reason}`;
       console.log(message);
-      await sendSlackNotification(message, 'info');
     }
   } catch (error) {
     console.error('Error monitoring validator switches:', error.message);
   }
-}
-
-async function sendSlackNotification(message, type = 'info') {
-  if (!process.env.SLACK_WEBHOOK) {
-    console.log('Slack webhook not configured');
-    return;
-  }
-
-  const color = type === 'success' ? 'good' : 
-                type === 'error' ? 'danger' : 
-                type === 'critical' ? '#ff0000' :
-                'warning';
   
-  try {
-    await axios.post(process.env.SLACK_WEBHOOK, {
-      attachments: [{
-        color: color,
-        title: 'SaintDurbin Distribution Update',
-        text: message,
-        footer: 'SaintDurbin Cron Job',
-        ts: Math.floor(Date.now() / 1000)
-      }]
-    });
-  } catch (error) {
-    console.error('Failed to send Slack notification:', error.message);
-  }
+  return switchEvents;
 }
 
-main().catch((error) => {
-  console.error('Unhandled error:', error);
-  process.exit(1);
-});
+// Export functions for testing
+module.exports = {
+  SAINTDURBIN_ABI,
+  CONFIG,
+  initializeDistribution,
+  executeDistribution,
+  checkValidatorStatus,
+  monitorValidatorSwitches,
+  getDistributionCount,
+  setDistributionCount,
+  main
+};
+
+// Run main function if this file is executed directly
+if (require.main === module) {
+  main().catch((error) => {
+    console.error('Unhandled error:', error);
+    process.exit(1);
+  });
+}

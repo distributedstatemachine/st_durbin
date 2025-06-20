@@ -1,0 +1,15 @@
+{
+  "timeout": 30000,
+  "recursive": true,
+  "exit": true,
+  "require": ["dotenv/config"],
+  "reporter": "spec",
+  "color": true,
+  "diff": true,
+  "full-trace": false,
+  "growl": false,
+  "inline-diffs": false,
+  "reporter-options": {
+    "maxDiffSize": 8192
+  }
+}

@@ -17,7 +17,6 @@ contract SaintDurbin {
     uint256 constant EXISTENTIAL_AMOUNT = 1e9; // 1 TAO in rao (9 decimals)
     uint256 constant BASIS_POINTS = 10000;
     uint256 constant RATE_MULTIPLIER_THRESHOLD = 2;
-    uint256 constant MIN_VALIDATOR_STAKE = 1000e9; // 1000 TAO
     uint256 constant EMERGENCY_TIMELOCK = 86400; // 24 hours timelock for emergency drain
 
     // ========== State Variables ==========
@@ -187,7 +186,8 @@ contract SaintDurbin {
             }
 
             // Enhanced principal detection: check both rate multiplier and absolute threshold
-            bool rateBasedDetection = lastRewardRate > 0 && currentRate > lastRewardRate * RATE_MULTIPLIER_THRESHOLD;
+            // Fix: Multiply before divide to avoid precision loss
+            bool rateBasedDetection = lastRewardRate > 0 && currentRate * 1 > lastRewardRate * RATE_MULTIPLIER_THRESHOLD;
             bool absoluteDetection = availableYield > lastPaymentAmount * 3; // Detect if yield is 3x previous payment
 
             if (rateBasedDetection || absoluteDetection) {
@@ -250,12 +250,13 @@ contract SaintDurbin {
             }
         }
 
-        // Update tracking
+        // Update tracking - get balance BEFORE updating state to prevent reentrancy issues
+        uint256 newBalance = _getStakedBalance();
         lastTransferBlock = block.number;
         lastPaymentAmount = totalTransferred;
-        previousBalance = _getStakedBalance();
+        previousBalance = newBalance;
 
-        emit StakeTransferred(totalTransferred, previousBalance);
+        emit StakeTransferred(totalTransferred, newBalance);
     }
 
     /**
@@ -307,7 +308,7 @@ contract SaintDurbin {
         bytes32 oldHotkey = currentValidatorHotkey;
 
         // Find best validator: highest stake + dividend among validators with permits
-        uint16 uidCount;
+        uint16 uidCount = 0;
         try metagraph.getUidCount(netuid) returns (uint16 count) {
             uidCount = count;
         } catch {
@@ -316,7 +317,7 @@ contract SaintDurbin {
         }
 
         uint16 bestUid = 0;
-        bytes32 bestHotkey;
+        bytes32 bestHotkey = bytes32(0);
         uint256 bestScore = 0;
         bool foundValid = false;
 
@@ -361,11 +362,18 @@ contract SaintDurbin {
         // Move stake to new validator
         uint256 currentStake = _getStakedBalance();
         if (currentStake > 0) {
-            try staking.moveStake(currentValidatorHotkey, bestHotkey, netuid, netuid, currentStake) {
-                currentValidatorHotkey = bestHotkey;
-                currentValidatorUid = bestUid;
+            // Update state variables BEFORE external call to prevent reentrancy
+            bytes32 previousHotkey = currentValidatorHotkey;
+            uint16 previousUid = currentValidatorUid;
+            currentValidatorHotkey = bestHotkey;
+            currentValidatorUid = bestUid;
+
+            try staking.moveStake(previousHotkey, bestHotkey, netuid, netuid, currentStake) {
                 emit ValidatorSwitched(oldHotkey, bestHotkey, bestUid, reason);
             } catch {
+                // Revert state changes on failure
+                currentValidatorHotkey = previousHotkey;
+                currentValidatorUid = previousUid;
                 emit ValidatorCheckFailed("Failed to move stake to new validator");
             }
         }
@@ -393,17 +401,20 @@ contract SaintDurbin {
      * @dev Can only be executed after timelock period
      */
     function executeEmergencyDrain() external onlyEmergencyOperator nonReentrant {
-        if (emergencyDrainRequestedAt == 0) revert NoPendingRequest();
+        if (emergencyDrainRequestedAt <= 0) revert NoPendingRequest();
         if (block.timestamp < emergencyDrainRequestedAt + EMERGENCY_TIMELOCK) revert TimelockNotExpired();
 
         uint256 balance = _getStakedBalance();
         if (balance == 0) revert NoBalance();
 
+        // Reset the request timestamp BEFORE external call to prevent reentrancy
+        emergencyDrainRequestedAt = 0;
+
         try staking.transferStake(drainSs58Address, currentValidatorHotkey, netuid, netuid, balance) {
-            // Reset the request timestamp
-            emergencyDrainRequestedAt = 0;
             emit EmergencyDrainExecuted(drainSs58Address, balance);
         } catch {
+            // Restore the request timestamp on failure
+            emergencyDrainRequestedAt = block.timestamp - EMERGENCY_TIMELOCK;
             revert StakeMoveFailure();
         }
     }
@@ -413,7 +424,7 @@ contract SaintDurbin {
      * @dev Can be called by anyone to cancel a pending drain after double the timelock period
      */
     function cancelEmergencyDrain() external {
-        if (emergencyDrainRequestedAt == 0) revert NoPendingRequest();
+        if (emergencyDrainRequestedAt <= 0) revert NoPendingRequest();
 
         // Allow anyone to cancel if double the timelock has passed (48 hours)
         require(

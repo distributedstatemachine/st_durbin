@@ -5,13 +5,20 @@
   "main": "distribute.js",
   "scripts": {
     "distribute": "node distribute.js",
-    "test": "node distribute.js --dry-run",
+    "test": "mocha test/**/*.test.js",
+    "test:distribute": "mocha test/distribute.test.js",
+    "test:validator": "mocha test/check-validator.test.js",
     "check-validator": "node check-validator.js"
   },
   "dependencies": {
     "ethers": "^6.9.0",
-    "axios": "^1.6.0",
     "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "mocha": "^10.2.0",
+    "chai": "^4.3.10",
+    "sinon": "^17.0.1",
+    "@polkadot/api": "^10.11.2"
   },
   "engines": {
     "node": ">=16.0.0"
