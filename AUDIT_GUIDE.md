@@ -222,12 +222,6 @@ function testFuzz_BlockIntervals(uint256 blocks) public {
 - [ ] Events provide sufficient monitoring capability
 - [ ] No reliance on block.timestamp for critical logic (except timelock)
 
-### Contact Information
-
-For questions during audit:
-- Technical: [Contact Development Team]
-- Security: security@example.com
-
 ### Additional Resources
 
 - [Full Technical Specification](./SPEC.md)
