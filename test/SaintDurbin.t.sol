@@ -17,6 +17,9 @@ contract SaintDurbinTest is Test {
 
     bytes32 drainSs58Address = bytes32(uint256(0x999));
     bytes32 validatorHotkey = bytes32(uint256(0x777));
+    // In production tests, this should be pre-calculated using the JS utility
+    // based on the test contract's deployment address
+    // For unit tests, we use a fixed value that MockStaking expects
     bytes32 contractSs58Key = bytes32(uint256(0x888));
     uint16 netuid = 1;
     uint16 validatorUid = 123;
@@ -347,9 +350,9 @@ contract SaintDurbinTest is Test {
         // Advance blocks
         vm.roll(block.number + 7200);
 
-        // Execute transfer - should emit TransferFailed with "Unknown error"
+        // Execute transfer - should emit TransferFailed with "Transfer failed"
         vm.expectEmit(false, false, false, true);
-        emit TransferFailed(recipientColdkeys[0], 10000000000, "Unknown error"); // 1% of 1000 TAO
+        emit TransferFailed(recipientColdkeys[0], 10000000000, "Transfer failed"); // 1% of 1000 TAO
 
         saintDurbin.executeTransfer();
     }
