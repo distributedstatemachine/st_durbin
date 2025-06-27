@@ -1,0 +1,38 @@
+{
+  "name": "saintdurbin-integration-tests",
+  "version": "1.0.0",
+  "description": "Live integration tests for SaintDurbin contract",
+  "scripts": {
+    "test": "NODE_OPTIONS='--loader ts-node/esm --no-warnings' mocha",
+    "test:deployment": "NODE_OPTIONS='--loader ts-node/esm --no-warnings' mocha --grep 'Contract Deployment'",
+    "test:transfer": "NODE_OPTIONS='--loader ts-node/esm --no-warnings' mocha --grep 'Yield Distribution'",
+    "test:validator": "NODE_OPTIONS='--loader ts-node/esm --no-warnings' mocha --grep 'Validator Switching'",
+    "test:emergency": "NODE_OPTIONS='--loader ts-node/esm --no-warnings' mocha --grep 'Emergency Drain'",
+    "compile-contracts": "cd ../.. && forge build",
+    "start-chain": "cd ../../subtensor_chain && ./scripts/localnet.sh",
+    "test:all": "npm run compile-contracts && npm test"
+  },
+  "dependencies": {
+    "@polkadot-labs/hdkd": "^0.0.10",
+    "@polkadot-labs/hdkd-helpers": "^0.0.11",
+    "@polkadot/api": "15.1.1",
+    "@types/mocha": "^10.0.10",
+    "crypto": "^1.0.1",
+    "dotenv": "16.4.7",
+    "ethers": "^6.13.5",
+    "mocha": "^11.1.0",
+    "polkadot-api": "^1.9.5",
+    "scale-ts": "^1.6.1",
+    "viem": "2.23.4"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.13",
+    "@types/chai": "^5.0.1",
+    "assert": "^2.1.0",
+    "chai": "^5.2.0",
+    "prettier": "^3.3.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.8"
+  }
+}
