@@ -236,15 +236,21 @@ contract SaintDurbin {
             }
 
             if (recipientAmount > 0) {
-                try staking.transferStake(
-                    recipients[i].coldkey, currentValidatorHotkey, netuid, netuid, recipientAmount
-                ) {
+                (bool success, ) = address(staking).call(
+                    abi.encodeWithSelector(
+                        IStaking.transferStake.selector,
+                        recipients[i].coldkey,
+                        currentValidatorHotkey,
+                        netuid,
+                        netuid,
+                        recipientAmount
+                    )
+                );
+                if (success) {
                     totalTransferred += recipientAmount;
                     emit RecipientTransfer(recipients[i].coldkey, recipientAmount, recipients[i].proportion);
-                } catch Error(string memory reason) {
-                    emit TransferFailed(recipients[i].coldkey, recipientAmount, reason);
-                } catch {
-                    emit TransferFailed(recipients[i].coldkey, recipientAmount, "Unknown error");
+                } else {
+                    emit TransferFailed(recipients[i].coldkey, recipientAmount, "Transfer failed");
                 }
             }
         }
@@ -265,37 +271,47 @@ contract SaintDurbin {
     function _checkAndSwitchValidator() internal {
         lastValidatorCheckBlock = block.number;
 
-        try metagraph.getValidatorStatus(netuid, currentValidatorUid) returns (bool isValidator) {
-            if (!isValidator) {
-                // Current validator lost permit, find new one
-                _switchToNewValidator("Validator lost permit");
-                return;
-            }
-        } catch {
+        (bool success, bytes memory returnData) = address(metagraph).staticcall(
+            abi.encodeWithSelector(IMetagraph.getValidatorStatus.selector, netuid, currentValidatorUid)
+        );
+        if (!success) {
             emit ValidatorCheckFailed("Failed to check validator status");
+            return;
+        }
+        bool isValidator = abi.decode(returnData, (bool));
+        if (!isValidator) {
+            // Current validator lost permit, find new one
+            _switchToNewValidator("Validator lost permit");
             return;
         }
 
         // Also check if the UID still has the same hotkey
-        try metagraph.getHotkey(netuid, currentValidatorUid) returns (bytes32 uidHotkey) {
-            if (uidHotkey != currentValidatorHotkey) {
-                // UID has different hotkey, need to find new validator
-                _switchToNewValidator("Validator UID hotkey mismatch");
-                return;
-            }
-        } catch {
+        (success, returnData) = address(metagraph).staticcall(
+            abi.encodeWithSelector(IMetagraph.getHotkey.selector, netuid, currentValidatorUid)
+        );
+        if (!success) {
             emit ValidatorCheckFailed("Failed to check UID hotkey");
+            return;
+        }
+        bytes32 uidHotkey = abi.decode(returnData, (bytes32));
+        if (uidHotkey != currentValidatorHotkey) {
+            // UID has different hotkey, need to find new validator
+            _switchToNewValidator("Validator UID hotkey mismatch");
             return;
         }
 
         // Check if validator is still active
-        try metagraph.getIsActive(netuid, currentValidatorUid) returns (bool isActive) {
-            if (!isActive) {
-                _switchToNewValidator("Validator is inactive");
-                return;
-            }
-        } catch {
+        (success, returnData) = address(metagraph).staticcall(
+            abi.encodeWithSelector(IMetagraph.getIsActive.selector, netuid, currentValidatorUid)
+        );
+        if (!success) {
             emit ValidatorCheckFailed("Failed to check validator active status");
+            return;
+        }
+        bool isActive = abi.decode(returnData, (bool));
+        if (!isActive) {
+            _switchToNewValidator("Validator is inactive");
+            return;
         }
     }
 
@@ -308,12 +324,14 @@ contract SaintDurbin {
 
         // Find best validator: highest stake + dividend among validators with permits
         uint16 uidCount = 0;
-        try metagraph.getUidCount(netuid) returns (uint16 count) {
-            uidCount = count;
-        } catch {
+        (bool success, bytes memory returnData) = address(metagraph).staticcall(
+            abi.encodeWithSelector(IMetagraph.getUidCount.selector, netuid)
+        );
+        if (!success) {
             emit ValidatorCheckFailed("Failed to get UID count");
             return;
         }
+        uidCount = abi.decode(returnData, (uint16));
 
         uint16 bestUid = 0;
         bytes32 bestHotkey = bytes32(0);
@@ -321,35 +339,47 @@ contract SaintDurbin {
         bool foundValid = false;
 
         for (uint16 uid = 0; uid < uidCount; uid++) {
-            try metagraph.getValidatorStatus(netuid, uid) returns (bool isValidator) {
-                if (!isValidator) continue;
+            (success, returnData) = address(metagraph).staticcall(
+                abi.encodeWithSelector(IMetagraph.getValidatorStatus.selector, netuid, uid)
+            );
+            if (!success) continue;
+            bool isValidator = abi.decode(returnData, (bool));
+            if (!isValidator) continue;
 
-                try metagraph.getIsActive(netuid, uid) returns (bool isActive) {
-                    if (!isActive) continue;
+            (success, returnData) = address(metagraph).staticcall(
+                abi.encodeWithSelector(IMetagraph.getIsActive.selector, netuid, uid)
+            );
+            if (!success) continue;
+            bool isActive = abi.decode(returnData, (bool));
+            if (!isActive) continue;
 
-                    // Get stake and dividend to calculate score
-                    uint64 stake = metagraph.getStake(netuid, uid);
-                    uint16 dividend = metagraph.getDividends(netuid, uid);
+            // Get stake and dividend to calculate score
+            (success, returnData) = address(metagraph).staticcall(
+                abi.encodeWithSelector(IMetagraph.getStake.selector, netuid, uid)
+            );
+            if (!success) continue;
+            uint64 stake = abi.decode(returnData, (uint64));
 
-                    // Score = stake * (1 + dividend/65535)
-                    // Using dividend as a percentage of max uint16
-                    uint256 score = uint256(stake) * (65535 + uint256(dividend)) / 65535;
+            (success, returnData) = address(metagraph).staticcall(
+                abi.encodeWithSelector(IMetagraph.getDividends.selector, netuid, uid)
+            );
+            if (!success) continue;
+            uint16 dividend = abi.decode(returnData, (uint16));
 
-                    if (score > bestScore) {
-                        try metagraph.getHotkey(netuid, uid) returns (bytes32 hotkey) {
-                            bestScore = score;
-                            bestUid = uid;
-                            bestHotkey = hotkey;
-                            foundValid = true;
-                        } catch {
-                            continue;
-                        }
-                    }
-                } catch {
-                    continue;
+            // Score = stake * (1 + dividend/65535)
+            // Using dividend as a percentage of max uint16
+            uint256 score = uint256(stake) * (65535 + uint256(dividend)) / 65535;
+
+            if (score > bestScore) {
+                (success, returnData) = address(metagraph).staticcall(
+                    abi.encodeWithSelector(IMetagraph.getHotkey.selector, netuid, uid)
+                );
+                if (success) {
+                    bestScore = score;
+                    bestUid = uid;
+                    bestHotkey = abi.decode(returnData, (bytes32));
+                    foundValid = true;
                 }
-            } catch {
-                continue;
             }
         }
 
@@ -367,9 +397,19 @@ contract SaintDurbin {
             currentValidatorHotkey = bestHotkey;
             currentValidatorUid = bestUid;
 
-            try staking.moveStake(previousHotkey, bestHotkey, netuid, netuid, currentStake) {
+            (success, ) = address(staking).call(
+                abi.encodeWithSelector(
+                    IStaking.moveStake.selector,
+                    previousHotkey,
+                    bestHotkey,
+                    netuid,
+                    netuid,
+                    currentStake
+                )
+            );
+            if (success) {
                 emit ValidatorSwitched(oldHotkey, bestHotkey, bestUid, reason);
-            } catch {
+            } else {
                 // Revert state changes on failure
                 currentValidatorHotkey = previousHotkey;
                 currentValidatorUid = previousUid;
@@ -409,9 +449,19 @@ contract SaintDurbin {
         // Reset the request timestamp BEFORE external call to prevent reentrancy
         emergencyDrainRequestedAt = 0;
 
-        try staking.transferStake(drainSs58Address, currentValidatorHotkey, netuid, netuid, balance) {
+        (bool success, ) = address(staking).call(
+            abi.encodeWithSelector(
+                IStaking.transferStake.selector,
+                drainSs58Address,
+                currentValidatorHotkey,
+                netuid,
+                netuid,
+                balance
+            )
+        );
+        if (success) {
             emit EmergencyDrainExecuted(drainSs58Address, balance);
-        } catch {
+        } else {
             // Restore the request timestamp on failure
             emergencyDrainRequestedAt = block.timestamp - EMERGENCY_TIMELOCK;
             revert StakeMoveFailure();
@@ -449,7 +499,11 @@ contract SaintDurbin {
      * @notice Internal helper to get staked balance
      */
     function _getStakedBalance() internal view returns (uint256) {
-        return staking.getStake(currentValidatorHotkey, thisSs58PublicKey, netuid);
+        (bool success, bytes memory returnData) = address(staking).staticcall(
+            abi.encodeWithSelector(IStaking.getStake.selector, currentValidatorHotkey, thisSs58PublicKey, netuid)
+        );
+        require(success, "Precompile call failed: getStake");
+        return abi.decode(returnData, (uint256));
     }
 
     /**
@@ -505,9 +559,12 @@ contract SaintDurbin {
     function getCurrentValidatorInfo() external view returns (bytes32 hotkey, uint16 uid, bool isValid) {
         hotkey = currentValidatorHotkey;
         uid = currentValidatorUid;
-        try metagraph.getValidatorStatus(netuid, currentValidatorUid) returns (bool status) {
-            isValid = status;
-        } catch {
+        (bool success, bytes memory returnData) = address(metagraph).staticcall(
+            abi.encodeWithSelector(IMetagraph.getValidatorStatus.selector, netuid, currentValidatorUid)
+        );
+        if (success) {
+            isValid = abi.decode(returnData, (bool));
+        } else {
             isValid = false;
         }
     }
