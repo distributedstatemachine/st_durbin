@@ -1,6 +1,3 @@
 [submodule "subtensor_chain"]
 	path = subtensor_chain
 	url = https://github.com/opentensor/subtensor.git
-[submodule "lib/forge-std"]
-	path = lib/forge-std
-	url = https://github.com/foundry-rs/forge-std
