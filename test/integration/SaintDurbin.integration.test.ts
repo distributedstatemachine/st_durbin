@@ -2,10 +2,10 @@ import { describe, it, before, beforeEach } from "mocha";
 import { expect } from "chai";
 import { ethers } from "ethers";
 import { devnet } from "../../subtensor_chain/evm-tests/.papi/descriptors/dist"
-import { getDevnetApi, getRandomSubstrateKeypair } from "../../subtensor_chain/evm-tests/src/substrate";
+import { getAliceSigner, getDevnetApi, getRandomSubstrateKeypair, waitForTransactionWithRetry } from "../../subtensor_chain/evm-tests/src/substrate";
 import { TypedApi } from "polkadot-api";
-import { convertPublicKeyToSs58 } from "../../subtensor_chain/evm-tests/src/address-utils";
-import { raoToEth, tao } from "../../subtensor_chain/evm-tests/src/balance-math";
+import { convertH160ToSS58, convertPublicKeyToSs58, ethAddressToH160 } from "../../subtensor_chain/evm-tests/src/address-utils";
+import { raoToEth, TAO, tao } from "../../subtensor_chain/evm-tests/src/balance-math";
 import {
     forceSetBalanceToSs58Address,
     forceSetBalanceToEthAddress,
@@ -22,6 +22,24 @@ import { ISTAKING_V2_ADDRESS, IStakingV2ABI } from "../../subtensor_chain/evm-te
 // Import the SaintDurbin contract ABI and bytecode
 import SaintDurbinArtifact from "../../out/SaintDurbin.sol/SaintDurbin.json";
 import { u8aToHex } from "@polkadot/util"
+
+import { KeyPair } from "@polkadot-labs/hdkd-helpers/";
+
+// it is not available in evm test framework, define it here
+// for testing purpose, just use the alice to swap coldkey. in product, we can schedule a swap coldkey
+async function swapColdkey(api: TypedApi<typeof devnet>, coldkey: KeyPair, contractAddress: string) {
+    const alice = getAliceSigner()
+    const internal_tx = api.tx.SubtensorModule.swap_coldkey({
+        old_coldkey: convertPublicKeyToSs58(coldkey.publicKey),
+        new_coldkey: convertH160ToSS58(contractAddress),
+        swap_cost: tao(10)
+    })
+    const tx = api.tx.Sudo.sudo({
+        call: internal_tx.decodedCall
+    })
+    await waitForTransactionWithRetry(api, tx, alice)
+}
+
 describe("SaintDurbin Live Integration Tests", () => {
     let api: TypedApi<typeof devnet>; // TypedApi from polkadot-api
     let provider: ethers.JsonRpcProvider;
@@ -172,6 +190,11 @@ describe("SaintDurbin Live Integration Tests", () => {
             // Wait for some blocks to pass and generate yield
             // In a real test environment, you would trigger epoch changes to generate rewards
             await new Promise(resolve => setTimeout(resolve, 30000));
+
+            // switch coldkey to contract
+            await swapColdkey(api, contractColdkey, await saintDurbin.getAddress())
+            // fund contract
+            await forceSetBalanceToEthAddress(api, await saintDurbin.getAddress())
 
             // Check if transfer can be executed
             const canExecute = await saintDurbin.canExecuteTransfer();
